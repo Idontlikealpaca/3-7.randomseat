@@ -1,6 +1,8 @@
-import { useState, useCallback } from "react";
+import { useState } from "react";
 
 const ZONES = ["미지정", "앞좌석", "사이드", "일반"];
+const SEAT_ZONES = ["앞좌석", "사이드", "일반"];
+
 const ZONE_COLORS = {
   미지정: { bg: "#2a2a2a", text: "#666", border: "#333" },
   앞좌석: { bg: "#1a2a1a", text: "#4ade80", border: "#2d5a2d" },
@@ -9,8 +11,6 @@ const ZONE_COLORS = {
 };
 
 // Seat layout: 5 columns, rows per col: 5,5,5,5,6
-// col index 0 = 열1 (사이드), col 4 = 열5 (사이드)
-// col 1,2,3 rows 0,1 = 앞좌석, rest = 일반
 const COL_ROWS = [5, 5, 5, 5, 6];
 
 function getSeatZone(col, row) {
@@ -48,22 +48,32 @@ export default function SeatingApp() {
     "조민선","주현경","한다솜","최서희","홍태희"
   ].map((name, i) => ({ id: i, name, zone: "미지정" }));
 
-  const [step, setStep] = useState("assign");
+  // step: "zoneSelect" → "assign" → "result"
+  const [step, setStep] = useState("zoneSelect");
   const [students, setStudents] = useState(FIXED_STUDENTS);
   const [seats, setSeats] = useState(INITIAL_SEATS);
   const [animating, setAnimating] = useState(false);
+  const [selectedSeatIdx, setSelectedSeatIdx] = useState(null);
 
-  const animating_placeholder = false; // keep for ref
+  // ── Zone Select (구역 범위 설정) ──────────────────────────
 
-  const cycleZone = (id) => {
-    setStudents((prev) =>
-      prev.map((s) =>
-        s.id === id
-          ? { ...s, zone: ZONES[(ZONES.indexOf(s.zone) + 1) % ZONES.length] }
-          : s
-      )
+  const cycleSeatZone = (col, row) => {
+    setSeats((prev) =>
+      prev.map((s) => {
+        if (s.col === col && s.row === row) {
+          const next = SEAT_ZONES[(SEAT_ZONES.indexOf(s.zone) + 1) % SEAT_ZONES.length];
+          return { ...s, zone: next };
+        }
+        return s;
+      })
     );
   };
+
+  const resetSeatZones = () => {
+    setSeats(INITIAL_SEATS.map((s) => ({ ...s, student: null })));
+  };
+
+  // ── Assign (학생 구역 지정) ───────────────────────────────
 
   const setZone = (id, zone) => {
     setStudents((prev) =>
@@ -71,25 +81,31 @@ export default function SeatingApp() {
     );
   };
 
+  const countByZone = (zone) => students.filter((s) => s.zone === zone).length;
+  const seatCountByZone = {
+    앞좌석: seats.filter((s) => s.zone === "앞좌석").length,
+    사이드: seats.filter((s) => s.zone === "사이드").length,
+    일반: seats.filter((s) => s.zone === "일반").length,
+  };
+
+  // ── Randomize ─────────────────────────────────────────────
+
   const handleRandomize = () => {
     setAnimating(true);
+    setSelectedSeatIdx(null);
     setTimeout(() => {
-      // Group students by zone
       const byZone = { 앞좌석: [], 사이드: [], 일반: [], 미지정: [] };
       students.forEach((s) => byZone[s.zone].push(s));
-
-      // Shuffle each group
       Object.keys(byZone).forEach((z) => (byZone[z] = shuffle(byZone[z])));
 
-      // Assign to seats by zone
-      const newSeats = INITIAL_SEATS.map((seat) => ({ ...seat, student: null }));
+      // 미지정 학생은 일반 구역에 자동 배정
+      const newSeats = seats.map((seat) => ({ ...seat, student: null }));
       const seatsByZone = { 앞좌석: [], 사이드: [], 일반: [] };
       newSeats.forEach((seat, i) => seatsByZone[seat.zone].push(i));
 
-      // Place students
       ["앞좌석", "사이드", "일반"].forEach((zone) => {
-        const zoneStudents = [...byZone[zone], ...byZone["미지정"].splice(0)];
-        // only place up to available seats
+        const extras = zone === "일반" ? byZone["미지정"] : [];
+        const zoneStudents = [...byZone[zone], ...extras];
         seatsByZone[zone].forEach((seatIdx, i) => {
           if (i < zoneStudents.length) {
             newSeats[seatIdx] = { ...newSeats[seatIdx], student: zoneStudents[i] };
@@ -103,12 +119,120 @@ export default function SeatingApp() {
     }, 600);
   };
 
-  const countByZone = (zone) => students.filter((s) => s.zone === zone).length;
-  const seatCountByZone = {
-    앞좌석: INITIAL_SEATS.filter((s) => s.zone === "앞좌석").length,
-    사이드: INITIAL_SEATS.filter((s) => s.zone === "사이드").length,
-    일반: INITIAL_SEATS.filter((s) => s.zone === "일반").length,
+  // ── Seat swap (자리 이동) ─────────────────────────────────
+
+  const handleSeatClick = (seatIdx) => {
+    if (selectedSeatIdx === null) {
+      setSelectedSeatIdx(seatIdx);
+    } else if (selectedSeatIdx === seatIdx) {
+      setSelectedSeatIdx(null);
+    } else {
+      setSeats((prev) => {
+        const newSeats = [...prev];
+        const a = { ...newSeats[selectedSeatIdx] };
+        const b = { ...newSeats[seatIdx] };
+        newSeats[selectedSeatIdx] = { ...a, student: b.student };
+        newSeats[seatIdx] = { ...b, student: a.student };
+        return newSeats;
+      });
+      setSelectedSeatIdx(null);
+    }
   };
+
+  // ── Shared: Classroom Grid ────────────────────────────────
+
+  const ClassroomGrid = ({ clickable, onSeatClick, highlightIdx }) => (
+    <div style={{ overflowX: "auto" }}>
+      <div style={{
+        width: "fit-content",
+        margin: "0 auto 8px",
+        padding: "6px 80px",
+        background: "#1a2a1a",
+        border: "1px solid #2d5a2d",
+        borderRadius: 2,
+        fontSize: 10,
+        color: "#4ade80",
+        letterSpacing: 3,
+        textAlign: "center",
+      }}>칠판</div>
+
+      <div style={{
+        display: "flex",
+        gap: 6,
+        justifyContent: "center",
+        alignItems: "flex-start",
+        padding: "8px 0",
+      }}>
+        <div style={{ writingMode: "vertical-rl", fontSize: 9, color: "#333", letterSpacing: 2, paddingTop: 8 }}>복도</div>
+
+        {[0,1,2,3,4].map((col) => {
+          const colSeats = seats
+            .map((s, i) => ({ ...s, idx: i }))
+            .filter((s) => s.col === col)
+            .sort((a, b) => a.row - b.row);
+
+          return (
+            <div key={col} style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+              {colSeats.map((seat) => {
+                const zc = ZONE_COLORS[seat.zone];
+                const isSelected = highlightIdx === seat.idx;
+                return (
+                  <div
+                    key={`${col}-${seat.row}`}
+                    className={`seat-cell${isSelected ? " seat-selected" : ""}`}
+                    onClick={() => clickable && onSeatClick && onSeatClick(seat.idx, seat.col, seat.row)}
+                    style={{
+                      width: 80,
+                      height: 52,
+                      background: seat.student ? zc.bg : zc.bg,
+                      border: `1px solid ${zc.border}`,
+                      borderRadius: 3,
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      padding: 4,
+                      cursor: clickable ? "pointer" : "default",
+                      outline: isSelected ? "2px solid #e5e5e5" : "none",
+                      outlineOffset: 2,
+                    }}
+                  >
+                    {seat.student ? (
+                      <>
+                        <div style={{ fontSize: 9, color: zc.text, letterSpacing: 0.5, opacity: 0.7 }}>
+                          {seat.zone}
+                        </div>
+                        <div style={{ fontSize: 13, color: zc.text, fontWeight: 500, textAlign: "center", lineHeight: 1.2 }}>
+                          {seat.student.name}
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div style={{ fontSize: 9, color: zc.text, letterSpacing: 0.5, opacity: 0.8, marginBottom: 2 }}>
+                          {seat.zone}
+                        </div>
+                        <div style={{ fontSize: 9, color: zc.text, opacity: 0.4 }}>빈 자리</div>
+                      </>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })}
+
+        <div style={{ writingMode: "vertical-rl", fontSize: 9, color: "#333", letterSpacing: 2, paddingTop: 8 }}>창문</div>
+      </div>
+    </div>
+  );
+
+  // ── Render ────────────────────────────────────────────────
+
+  const STEPS = [
+    { key: "zoneSelect", label: "구역 범위 설정" },
+    { key: "assign", label: "구역 지정" },
+    { key: "result", label: "배치 결과" },
+  ];
 
   return (
     <div style={{
@@ -126,8 +250,9 @@ export default function SeatingApp() {
         ::-webkit-scrollbar-thumb { background: #333; }
         .zone-badge { cursor: pointer; transition: all 0.15s; user-select: none; }
         .zone-badge:hover { filter: brightness(1.3); transform: scale(1.05); }
-        .seat-cell { transition: all 0.3s; }
-        .seat-cell:hover { filter: brightness(1.2); }
+        .seat-cell { transition: all 0.2s; }
+        .seat-cell:hover { filter: brightness(1.25); }
+        .seat-selected { filter: brightness(1.3) !important; }
         .btn { cursor: pointer; transition: all 0.2s; border: none; }
         .btn:hover { filter: brightness(1.15); transform: translateY(-1px); }
         .btn:active { transform: translateY(0); }
@@ -146,27 +271,84 @@ export default function SeatingApp() {
           자리 배치기
         </h1>
         <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
-          {["구역 지정", "배치 결과"].map((label, i) => (
-            <div key={i} style={{
+          {STEPS.map(({ key, label }) => (
+            <div key={key} style={{
               padding: "4px 12px",
               fontSize: 11,
               letterSpacing: 1,
               borderRadius: 2,
-              background: step === ["assign","result"][i] ? "#e5e5e5" : "#1a1a1a",
-              color: step === ["assign","result"][i] ? "#0a0a0a" : "#444",
+              background: step === key ? "#e5e5e5" : "#1a1a1a",
+              color: step === key ? "#0a0a0a" : "#444",
             }}>{label}</div>
           ))}
         </div>
       </div>
 
-      {/* STEP 2: Assign zones */}
+      {/* STEP 1: Zone range selection */}
+      {step === "zoneSelect" && (
+        <div className="fade-in">
+          <div style={{ fontSize: 11, color: "#444", letterSpacing: 2, marginBottom: 8 }}>
+            구역 범위 설정 — 자리를 클릭해서 구역 변경
+          </div>
+          <div style={{ fontSize: 11, color: "#333", marginBottom: 24 }}>
+            각 자리를 클릭하면 앞좌석 → 사이드 → 일반 순으로 구역이 바뀝니다
+          </div>
+
+          <ClassroomGrid
+            clickable
+            onSeatClick={(_idx, col, row) => cycleSeatZone(col, row)}
+            highlightIdx={null}
+          />
+
+          {/* Legend */}
+          <div style={{ display: "flex", gap: 16, justifyContent: "center", marginTop: 16, marginBottom: 24 }}>
+            {SEAT_ZONES.map((zone) => (
+              <div key={zone} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11 }}>
+                <div style={{ width: 10, height: 10, background: ZONE_COLORS[zone].bg, border: `1px solid ${ZONE_COLORS[zone].border}`, borderRadius: 1 }}/>
+                <span style={{ color: ZONE_COLORS[zone].text }}>{zone}</span>
+              </div>
+            ))}
+          </div>
+
+          <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
+            <button className="btn" onClick={resetSeatZones} style={{
+              padding: "10px 20px",
+              background: "transparent",
+              color: "#666",
+              borderRadius: 2,
+              fontSize: 12,
+              fontFamily: "'DM Mono', monospace",
+              letterSpacing: 1,
+              border: "1px solid #222",
+            }}>
+              초기화
+            </button>
+            <button className="btn" onClick={() => setStep("assign")} style={{
+              padding: "10px 24px",
+              background: "#e5e5e5",
+              color: "#0a0a0a",
+              borderRadius: 2,
+              fontSize: 12,
+              fontFamily: "'DM Mono', monospace",
+              letterSpacing: 1,
+            }}>
+              다음 →
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* STEP 2: Assign student zones */}
       {step === "assign" && (
         <div className="fade-in">
           <div style={{ display: "flex", gap: 32, flexWrap: "wrap" }}>
             {/* Student list */}
             <div style={{ flex: "1 1 300px" }}>
-              <div style={{ fontSize: 11, color: "#444", letterSpacing: 2, marginBottom: 16 }}>
+              <div style={{ fontSize: 11, color: "#444", letterSpacing: 2, marginBottom: 8 }}>
                 학생 목록 — 클릭해서 구역 변경
+              </div>
+              <div style={{ fontSize: 11, color: "#333", marginBottom: 16 }}>
+                미지정 학생은 자동으로 일반 구역에 배정됩니다
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                 {students.map((s) => (
@@ -182,15 +364,22 @@ export default function SeatingApp() {
                     <span style={{ fontSize: 13, color: "#ccc" }}>{s.name}</span>
                     <div style={{ display: "flex", gap: 4 }}>
                       {["앞좌석", "사이드", "일반"].map((zone) => (
-                        <div key={zone} className="zone-badge" onClick={() => setZone(s.id, zone)} style={{
-                          padding: "3px 8px",
-                          fontSize: 10,
-                          borderRadius: 2,
-                          letterSpacing: 0.5,
-                          border: `1px solid ${s.zone === zone ? ZONE_COLORS[zone].border : "#222"}`,
-                          background: s.zone === zone ? ZONE_COLORS[zone].bg : "transparent",
-                          color: s.zone === zone ? ZONE_COLORS[zone].text : "#333",
-                        }}>{zone}</div>
+                        <div
+                          key={zone}
+                          className="zone-badge"
+                          onClick={() => setZone(s.id, s.zone === zone ? "미지정" : zone)}
+                          style={{
+                            padding: "3px 8px",
+                            fontSize: 10,
+                            borderRadius: 2,
+                            letterSpacing: 0.5,
+                            border: `1px solid ${s.zone === zone ? ZONE_COLORS[zone].border : "#222"}`,
+                            background: s.zone === zone ? ZONE_COLORS[zone].bg : "transparent",
+                            color: s.zone === zone ? ZONE_COLORS[zone].text : "#333",
+                          }}
+                        >
+                          {zone}
+                        </div>
                       ))}
                     </div>
                   </div>
@@ -212,7 +401,7 @@ export default function SeatingApp() {
                   borderRadius: 3,
                 }}>
                   <div style={{ fontSize: 10, color: ZONE_COLORS[zone].text, letterSpacing: 1, marginBottom: 4 }}>
-                    {zone}
+                    {zone}{zone === "미지정" ? " (→일반)" : ""}
                   </div>
                   <div style={{ fontSize: 22, fontWeight: 500, color: ZONE_COLORS[zone].text }}>
                     {countByZone(zone)}
@@ -223,8 +412,24 @@ export default function SeatingApp() {
                 </div>
               ))}
 
+              <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+                <button className="btn" onClick={() => setStep("zoneSelect")} style={{
+                  flex: 1,
+                  padding: "10px 0",
+                  background: "transparent",
+                  color: "#666",
+                  borderRadius: 2,
+                  fontSize: 11,
+                  fontFamily: "'DM Mono', monospace",
+                  letterSpacing: 1,
+                  border: "1px solid #222",
+                }}>
+                  ← 구역 설정
+                </button>
+              </div>
+
               <button className="btn" onClick={handleRandomize} disabled={animating} style={{
-                marginTop: 16,
+                marginTop: 8,
                 width: "100%",
                 padding: "14px",
                 background: animating ? "#1a1a1a" : "#e5e5e5",
@@ -243,7 +448,6 @@ export default function SeatingApp() {
                   <><span className="spin" style={{ display: "inline-block" }}>⟳</span> 배치 중...</>
                 ) : "🎲 랜덤 배치"}
               </button>
-
             </div>
           </div>
         </div>
@@ -252,7 +456,7 @@ export default function SeatingApp() {
       {/* STEP 3: Result */}
       {step === "result" && (
         <div className="fade-in">
-          <div style={{ marginBottom: 20, display: "flex", gap: 12, alignItems: "center" }}>
+          <div style={{ marginBottom: 16, display: "flex", gap: 12, alignItems: "center" }}>
             <button className="btn" onClick={handleRandomize} style={{
               padding: "10px 20px",
               background: "#e5e5e5",
@@ -277,87 +481,29 @@ export default function SeatingApp() {
               ← 구역 수정
             </button>
             <div style={{ fontSize: 11, color: "#333", marginLeft: "auto", letterSpacing: 1 }}>
-              {["앞좌석","사이드","일반"].map(z => (
+              {["앞좌석","사이드","일반"].map((z) => (
                 <span key={z} style={{ marginRight: 16, color: ZONE_COLORS[z].text }}>
-                  {z} {seats.filter(s=>s.zone===z && s.student).length}
+                  {z} {seats.filter((s) => s.zone === z && s.student).length}
                 </span>
               ))}
             </div>
           </div>
 
-          {/* Seating grid */}
-          <div style={{ overflowX: "auto" }}>
-            {/* Blackboard */}
-            <div style={{
-              width: "fit-content",
-              margin: "0 auto 8px",
-              padding: "6px 80px",
-              background: "#1a2a1a",
-              border: "1px solid #2d5a2d",
-              borderRadius: 2,
-              fontSize: 10,
-              color: "#4ade80",
-              letterSpacing: 3,
-              textAlign: "center",
-            }}>칠판</div>
-
-            <div style={{
-              display: "flex",
-              gap: 6,
-              justifyContent: "center",
-              alignItems: "flex-start",
-              padding: "8px 0",
-            }}>
-              {/* Label: 복도 */}
-              <div style={{ writingMode: "vertical-rl", fontSize: 9, color: "#333", letterSpacing: 2, paddingTop: 8 }}>복도</div>
-
-              {/* Columns */}
-              {[0,1,2,3,4].map((col) => {
-                const colSeats = seats.filter(s => s.col === col).sort((a,b) => a.row - b.row);
-                return (
-                  <div key={col} style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-                    {colSeats.map((seat) => {
-                      const zc = ZONE_COLORS[seat.zone];
-                      return (
-                        <div key={`${col}-${seat.row}`} className="seat-cell" style={{
-                          width: 80,
-                          height: 52,
-                          background: seat.student ? zc.bg : "#111",
-                          border: `1px solid ${seat.student ? zc.border : "#1a1a1a"}`,
-                          borderRadius: 3,
-                          display: "flex",
-                          flexDirection: "column",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          padding: 4,
-                        }}>
-                          {seat.student ? (
-                            <>
-                              <div style={{ fontSize: 9, color: zc.text, letterSpacing: 0.5, opacity: 0.7 }}>
-                                {seat.zone}
-                              </div>
-                              <div style={{ fontSize: 13, color: zc.text, fontWeight: 500, textAlign: "center", lineHeight: 1.2 }}>
-                                {seat.student.name}
-                              </div>
-                            </>
-                          ) : (
-                            <div style={{ fontSize: 9, color: "#2a2a2a" }}>빈 자리</div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                );
-              })}
-
-              {/* Label: 창문 */}
-              <div style={{ writingMode: "vertical-rl", fontSize: 9, color: "#333", letterSpacing: 2, paddingTop: 8 }}>창문</div>
-            </div>
+          <div style={{ fontSize: 11, color: selectedSeatIdx !== null ? "#888" : "#333", marginBottom: 16, textAlign: "center", letterSpacing: 1 }}>
+            {selectedSeatIdx !== null
+              ? "이동할 자리를 클릭하세요 (같은 자리 클릭 시 취소)"
+              : "자리를 클릭해서 서로 교환할 수 있습니다"}
           </div>
+
+          <ClassroomGrid
+            clickable
+            onSeatClick={(seatIdx) => handleSeatClick(seatIdx)}
+            highlightIdx={selectedSeatIdx}
+          />
 
           {/* Legend */}
           <div style={{ display: "flex", gap: 16, justifyContent: "center", marginTop: 16 }}>
-            {["앞좌석","사이드","일반"].map(zone => (
+            {["앞좌석","사이드","일반"].map((zone) => (
               <div key={zone} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11 }}>
                 <div style={{ width: 10, height: 10, background: ZONE_COLORS[zone].bg, border: `1px solid ${ZONE_COLORS[zone].border}`, borderRadius: 1 }}/>
                 <span style={{ color: "#444" }}>{zone}</span>
