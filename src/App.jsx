@@ -153,6 +153,7 @@ export default function SeatingApp() {
   };
 
   const setZone = (id, zone) => {
+    setStep("assign");
     setStudents((prev) => prev.map((s) => (s.id === id ? { ...s, zone } : s)));
   };
 
@@ -165,7 +166,24 @@ export default function SeatingApp() {
       <div className="frame">
         <div className="retro-header">
           <h1>랜덤 자리 배치기</h1>
-          <div className="status-chip">{step === "assign" ? "구역 지정" : "결과 확인"}</div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            {['assign', 'result'].map((mode) => (
+              <button
+                key={mode}
+                onClick={() => setStep(mode)}
+                className="btn-retro"
+                style={{
+                  padding: '5px 10px',
+                  fontSize: 12,
+                  background: step === mode ? '#8d622f' : '#ffe59f',
+                  color: step === mode ? '#fff' : '#3a2208',
+                  boxShadow: 'none',
+                }}
+              >
+                {mode === 'assign' ? '구역 지정' : '결과 보기'}
+              </button>
+            ))}
+          </div>
         </div>
 
         <div className="progress">
